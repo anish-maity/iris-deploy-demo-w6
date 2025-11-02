@@ -1,0 +1,135 @@
+name: CI/CD to GKE (Iris API)
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GAR_LOCATION: us-central1
+  GAR_REPOSITORY: my-iris-repo
+  GKE_CLUSTER: [YOUR-GKE-CLUSTER-NAME] # e.g., my-gke-cluster
+  GKE_ZONE: [YOUR-GKE-CLUSTER-ZONE] # e.g., us-central1-c
+  IMAGE_NAME: iris-api
+  DEPLOYMENT_NAME: iris-demo-workload # Your existing GKE deployment name
+
+jobs:
+  build-and-deploy:
+    name: Build, Push, and Deploy to GKE
+    runs-on: ubuntu-latest
+    
+    # REQUIRED PERMISSIONS:
+    # 1. contents: 'read' and id-token: 'write' for WIF/GCP auth.
+    # 2. pull-requests: 'write' for commenting on the commit.
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      pull-requests: 'write'
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    # 1. Authenticate to Google Cloud using WIF
+    - name: Google Auth
+      uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ secrets.WIF_PROVIDER }} 
+        service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+    # 2. Configure Docker and setup gcloud SDK
+    - name: Set up Cloud SDK and Configure Docker
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ env.PROJECT_ID }}
+        
+    - name: Configure Docker to push to GAR
+      run: gcloud auth configure-docker ${{ env.GAR_LOCATION }}-docker.pkg.dev --quiet
+
+    # 3. Build and Push the Docker Image
+    - name: Build and Push Docker Image to GAR
+      id: build-image
+      run: |
+        # Use short commit SHA as the tag for an immutable version
+        IMAGE_TAG=${{ github.sha }} 
+        GAR_IMAGE=${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}
+        
+        # Build the Docker image (using your existing Dockerfile)
+        docker build -t $GAR_IMAGE .
+        
+        # Push the Docker image to Artifact Registry
+        docker push $GAR_IMAGE
+        
+        # Pass the full image URL to the next steps
+        echo "image_url=$GAR_IMAGE" >> $GITHUB_OUTPUT
+
+    # 4. Get GKE Credentials
+    - name: Get GKE Credentials
+      uses: google-github-actions/get-gke-credentials@v2
+      with:
+        cluster_name: ${{ env.GKE_CLUSTER }}
+        location: ${{ env.GKE_ZONE }}
+
+    # 5. Deploy to GKE
+    - name: Deploy to GKE and Rollout Update
+      id: deploy
+      run: |
+        IMAGE_URL=${{ steps.build-image.outputs.image_url }}
+        
+        # Use kubectl to update the image of the running deployment
+        kubectl set image deployment/${{ env.DEPLOYMENT_NAME }} iris-api-container=$IMAGE_URL --record
+        
+        # Wait for the deployment rollout to complete before finishing the job
+        kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }}
+        
+        # Capture the service IP (assuming the service is LoadBalancer and exists)
+        EXTERNAL_IP=$(kubectl get service ${{ env.DEPLOYMENT_NAME }}-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+        
+        echo "external_ip=$EXTERNAL_IP" >> $GITHUB_OUTPUT
+      # Fail this step gracefully if the deployment status check fails, but continue to comment step
+      continue-on-error: true
+
+    # 6. Comment on the Commit
+    - name: Post Deployment Status Comment
+      uses: actions/github-script@v6
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const deploymentStatus = ${{ steps.deploy.outcome }};
+          const imageTag = "${{ github.sha }}";
+          const externalIP = "${{ steps.deploy.outputs.external_ip }}";
+          const clusterName = "${{ env.GKE_CLUSTER }}";
+          
+          let statusMessage;
+          let color;
+          
+          if (deploymentStatus === 'success') {
+            statusMessage = '✅ Deployment **succeeded!**';
+            color = 'good';
+          } else {
+            statusMessage = '❌ Deployment **failed** or timed out during rollout.';
+            color = 'error';
+          }
+          
+          const commentBody = `
+          ${statusMessage}
+          
+          ---
+          
+          * **Image Tag:** \`${imageTag}\`
+          * **Cluster:** \`${clusterName}\`
+          * **Image URL:** \`${{ steps.build-image.outputs.image_url }}\`
+          * **GKE Deployment:** \`${{ env.DEPLOYMENT_NAME }}\`
+          * **External IP:** ${externalIP ? `[\`http://${externalIP}\`](http://${externalIP})` : 'Pending (Check GKE Service)'}
+          
+          Check the [workflow run logs](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for details.
+          `;
+          
+          // Post the comment to the commit that triggered the push
+          github.rest.repos.createCommitComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            commit_sha: context.sha,
+            body: commentBody
+          });
