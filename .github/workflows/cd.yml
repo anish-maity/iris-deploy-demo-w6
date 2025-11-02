@@ -23,7 +23,7 @@ jobs:
     # 1. contents: 'read' and id-token: 'write' for WIF/GCP auth.
     # 2. pull-requests: 'write' for commenting on the commit.
     permissions:
-      contents: 'read'
+      contents: 'write'
       id-token: 'write'
       pull-requests: 'write'
 
@@ -78,10 +78,10 @@ jobs:
         IMAGE_URL=${{ steps.build-image.outputs.image_url }}
         
         # Use kubectl to update the image of the running deployment
-        kubectl set image deployment/${{ env.DEPLOYMENT_NAME }} iris-api-container=$IMAGE_URL --record
+        kubectl set image deployment/${{ env.DEPLOYMENT_NAME }} iris-api-sha256-1=$IMAGE_URL --record
         
         # Wait for the deployment rollout to complete before finishing the job
-        kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }}
+        #kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }}
         
         # Capture the service IP (assuming the service is LoadBalancer and exists)
         EXTERNAL_IP=$(kubectl get service ${{ env.DEPLOYMENT_NAME }}-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
