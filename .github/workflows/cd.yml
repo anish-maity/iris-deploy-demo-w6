@@ -96,7 +96,9 @@ jobs:
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
-          const deploymentStatus = ${{ steps.deploy.outcome }};
+          // FIX: Wrap the context variable in quotes to treat it as a string literal.
+          const deploymentStatus = '${{ steps.deploy.outcome }}';
+          
           const imageTag = "${{ github.sha }}";
           const externalIP = "${{ steps.deploy.outputs.external_ip }}";
           const clusterName = "${{ env.GKE_CLUSTER }}";
@@ -104,11 +106,12 @@ jobs:
           let statusMessage;
           let color;
           
+          // Now safely compares the string literal to 'success'
           if (deploymentStatus === 'success') {
             statusMessage = '✅ Deployment **succeeded!**';
             color = 'good';
           } else {
-            statusMessage = '❌ Deployment **failed** or timed out during rollout.';
+            statusMessage = '❌ Deployment **failed** or timed out during rollout. Check the previous steps for errors.';
             color = 'error';
           }
           
@@ -121,7 +124,7 @@ jobs:
           * **Cluster:** \`${clusterName}\`
           * **Image URL:** \`${{ steps.build-image.outputs.image_url }}\`
           * **GKE Deployment:** \`${{ env.DEPLOYMENT_NAME }}\`
-          * **External IP:** ${externalIP ? `[\`http://${externalIP}\`](http://${externalIP})` : 'Pending (Check GKE Service)'}
+          * **External IP:** ${externalIP ? `[\`http://${externalIP}:80\`](http://${externalIP}:80)` : 'Pending (Check GKE Service)'}
           
           Check the [workflow run logs](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for details.
           `;
