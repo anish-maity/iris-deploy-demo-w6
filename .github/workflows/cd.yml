@@ -9,8 +9,8 @@ env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   GAR_LOCATION: us-central1
   GAR_REPOSITORY: my-iris-repo
-  GKE_CLUSTER: [YOUR-GKE-CLUSTER-NAME] # e.g., my-gke-cluster
-  GKE_ZONE: [YOUR-GKE-CLUSTER-ZONE] # e.g., us-central1-c
+  GKE_CLUSTER: demo-iris-cluster  # e.g., my-gke-cluster
+  GKE_ZONE: us-central1 # e.g., us-central1-c
   IMAGE_NAME: iris-api
   DEPLOYMENT_NAME: iris-demo-workload # Your existing GKE deployment name
 
